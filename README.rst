@@ -30,3 +30,10 @@ Install using ``pip``:
     cd flow_channel_cnn
     pip install -e .
 
+
+===========
+Experiments
+===========
+
+The training of the invariant CNN model is implemented in the ``flow_channel_cnn/experiments/train_invariant_cnn.py`` module. Simply execute 
+the module and the results will be automatically generated in the ``flow_channel_cnn/experiments/results`` directory.
