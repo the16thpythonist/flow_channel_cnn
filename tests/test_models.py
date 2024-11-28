@@ -73,6 +73,7 @@ class TestInvariantCNN:
         """
         model = InvariantCNN(
             input_dim=3,
+            input_shape=(100, 100),
         )
         assert isinstance(model, pl.LightningModule)
         assert isinstance(model, InvariantCNN)

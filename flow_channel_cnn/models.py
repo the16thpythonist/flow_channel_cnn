@@ -176,6 +176,20 @@ class AbstractCNN(pl.LightningModule):
 class InvariantCNN(AbstractCNN):
     """
     Invariant CNN model that is invariant to vertical flipping and the horizontal shifting of the input data.
+    
+    :param input_dim: The number of channels in the input images.
+    :param input_shape: A tuple (height, width) that specifies the dimensions of the input images
+    :param conv_units: A list of integers that specify the number of units (=channels) in the corresponding layers
+        Each element in this list represents/adds another layer in the convolutional part of the network.
+    :param dense_units: A list of integers that specify the number of units in the corresponding layers of the dense
+        prediction part of the network. This part of the network is used to make the final prediction.
+        Each element in this list represents/adds another layer in the dense part of the network.
+    :param learning_rate: The learning rate to use for the optimizer.
+    :param kernel_size: The kernel size to use for the convolutional layers. For symmetry reasons this needs to be 
+        an even number to preserve the shift invariance.
+    :param stride: The stride to use for the downsampling in the convolutional layers.
+    :param use_aps: A flag that indicates whether to use the Adaptive Polyphase Sampling layer to eliminate the shift
+        variance of the striding operation.
     """
     
     def __init__(self, 
@@ -222,10 +236,14 @@ class InvariantCNN(AbstractCNN):
             'use_aps': use_aps,
         })
     
-        self.lay_act = nn.LeakyReLU()
-    
         _height = height
-        embedding_size: int = 0
+        # This is the size of the concatenated embedding vector that will be fed into the final prediction 
+        # network. We will calculate the actual size of this as we are setting up the network conv layers in 
+        # the subsequent lines of code.
+        self.embedding_size: int = 0
+        
+        # ~ convolutional encoder
+        
         self.layers_conv = nn.ModuleList()
         prev_units = input_dim
         for units in conv_units:
@@ -247,12 +265,21 @@ class InvariantCNN(AbstractCNN):
                 # shift invariant.
                 nn.MaxPool2d(
                     kernel_size=2, 
+                    # If we use_aps then we set the stride of the pooling layer to 1 because in that case 
+                    # the striding reduction of the input size will be handled by the subsequent APS layer.
                     stride=1 if self.use_aps else self.stride
                 ),
             ]
             if self.use_aps:
+                
+                # The APS layer solves the problem of a small inherent variance to shifting during a striding 
+                # operation. With a stride of 2 for example, the output of the network depends on where the 
+                # striding starts - there are two possibilities that lead to slightly different outputs.
+                # The APS layer solves this problem by deciding the starting index from a deterministic 
+                # criterion based on the data itself (in this case the norm)
                 modules.append(AdaptivePolyphaseSampling(
                     stride=self.stride, 
+                    # use l2 norm to decide the striding indexing
                     p=2
                 ))
             
@@ -260,10 +287,17 @@ class InvariantCNN(AbstractCNN):
             self.layers_conv.append(lay)
             prev_units = units  
             
+            # Since we later concatenate the aggregated vector embeddings of the individual convolutional layers 
+            # for the final prediction, here we keep a running calculation of what this concatenated embedding size
+            # will be.
             _height = math.ceil(_height / 2)              
-            embedding_size += units * _height
+            self.embedding_size += units * _height
         
-        prev_units = embedding_size
+        # ~ dense prediction network
+        # After concatenating the embeddings of the convolutional layers we feed this into a dense prediction network
+        # to obtain the final property predictions.
+        
+        prev_units = self.embedding_size
         self.layers_dense = nn.ModuleList()
         for units in dense_units[:-1]:
             lay = nn.Sequential(
@@ -274,13 +308,23 @@ class InvariantCNN(AbstractCNN):
             self.layers_dense.append(lay)
             prev_units = units
 
+        # We need a final layer without an activation since we want to solve a regression 
+        # task here.
         lay = nn.Linear(prev_units, dense_units[-1])
         self.layers_dense.append(lay)
         
     def embedd_single(self, 
                       x: torch.Tensor
                       ) -> torch.Tensor:
+        """
+        Given the input tensor ``x``, this method will pass it through the convolutional layers of the network
+        concatenate the intermediate aggregations into a single flat embedding of the size ``self.embedding_size``.
         
+        NOTE: This method only processes the given input tensor. The flip invariance is handled in the ``forward``
+        method.
+        
+        :returns: The embedded vector
+        """
         intermediates: List[torch.Tensor] = []
         for lay in self.layers_conv:
             x = lay(x)
@@ -294,19 +338,36 @@ class InvariantCNN(AbstractCNN):
     def forward(self,
                 x: torch.Tensor,
                 ) -> torch.Tensor:
-        
+        """
+        This method performs a single forward pass on the input tensor ``x`` of the shape (batch_size, num_channels, height, width) 
+        and returns a final prediction tensor with the shape (batch_size, num_outputs).
+        """
+        # ~ flip invariance
+        # The flip invariance is implemented by embedding both the original and the flipped input tensor 
+        # separately and then summing the embeddings up such that the resulting embedding is the same no
+        # matter which summand was the flipped image. 
         emb_orig = self.embedd_single(x)
         
         x_flip = torch.flip(x, dims=[2])
         emb_flip = self.embedd_single(x_flip)
         
-        out = emb_orig + emb_flip
+        emb = emb_orig + emb_flip
+        
+        # ~ prediction
+        out = emb
         for lay in self.layers_dense:
             out = lay(out)
             
         return out
     
-    def training_step(self, batch, batch_idx):
+    def training_step(self, 
+                      batch: tuple, 
+                      batch_idx: int
+                      ) -> torch.Tensor:
+        """
+        This method implements the calculation of the training loss function which will then internally 
+        be used to update the weights of the network with a single training ``batch``.
+        """
         x, y_true = batch
         y_pred = self(x)
         loss = F.mse_loss(y_pred, y_true)
@@ -315,6 +376,9 @@ class InvariantCNN(AbstractCNN):
     
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+    
+
+# == VARIATIONAL AUTOENCODER ==
     
     
 class WarmupKLScheduler(pl.Callback):

@@ -25,14 +25,48 @@ from flow_channel_cnn.utils import render_latex, latex_table
 #       contain the images and the labels of the dataset.
 SOURCE_PATH: str = os.path.join(EXPERIMENTS_PATH, 'assets', 'dataset')
 
-# == TRANING PARAMETERS ==
+# == MODEL PARAMETERS ==
+# Parameters related to the construction of the model
 
-EPOCHS: int = 1
+
+
+# == TRANING PARAMETERS ==
+# Parameters related to the training process of the model
+
+# :param CONV_UNITS:
+#       The number of convolutional units to use for the model. This should be a list of integers where
+#       each integer represents the number of filters to use for each convolutional layer. Each integer
+#       in the list will represent/add one layer.
+CONV_UNITS: List[int] = [16, 32, 64, 128, 256]
+# :param DENSE_UNITS:
+#       The number of dense units to use for the model. This should be a list of integers where each integer
+#       represents the number of units to use for each dense layer. Each integer in the list will represent/add
+#       one layer. The final number of units in this list should match the number of target values that 
+#       the model should predict.
+DENSE_UNITS: List[int] = [256, 128, 64, 2]
+# :param KERNEL_SIZE:
+#       The kernel size to use for the convolutional layers.
+KERNEL_SIZE: int = 8
+# :param USE_APS:
+#       Whether to use the Adaptive Polyphase Sampling (APS) layer in the model. If set to True, the model will
+#       use the APS layer after each convolutional layer to perform the strided downsampling.
+USE_APS: bool = True
+
+# :param EPOCHS:
+#       The number of epochs to train the model for.
+EPOCHS: int = 100
+# :param BATCH_SIZE:
+#       The batch size to use for training.
 BATCH_SIZE: int = 16
+# :param LEARNING_RATE:
+#       The learning rate to use for training.
 LEARNING_RATE: float = 1e-5
 
 # == EVALUATION PARAMETERS ==
 
+# :param NUM_EXAMPLES:
+#       The number of examples to use for the shift and flip invariance evaluation.
+#       Selecting a high number here may incur a high runtime after the training of the model.
 NUM_EXAMPLES: int = 5
 
 
@@ -47,7 +81,9 @@ experiment = Experiment(
 def load_dataset(e: Experiment
                  ) -> Tuple[list, list]:
     """
-    
+    Loads the dataset and returns it as a tuple (train_list, test_list) of lists where the 
+    first element is a list containing tuples (x, y) of the training set samples and the second 
+    element is a list containing elements (x, y) of the test set samples.
     """
     
     # ~ train set
@@ -84,7 +120,11 @@ def evaluate_shift_invariance(e: Experiment,
                               key: str = 'test',
                               ) -> np.ndarray:
     """
+    Given a ``model`` an input element ``x`` and a unique string key, this function will evaluate the shift invariance
+    of the model on that given element by applying all possible horizontal shifts of the image and comparing the 
+    predictions of the original image with the predictions of the shifted images.
     
+    This function will also plot the results and save them to the experiment archive folder.
     """
     # constructing the shifted versions
     width = x.shape[3]
@@ -137,7 +177,8 @@ def evaluate_flip_invariance(e: Experiment,
                              key: str = 'test'
                              ) -> np.ndarray:
     """
-    
+    Given a ``model`` and an input element ``x``, this function will evaluate the vertical flip invariance of the model
+    on that given element by comparing the predictions of the original image with the predictions of the flipped image.
     """
     x_flip = np.flip(x, axis=2)
     
@@ -240,6 +281,8 @@ def experiment(e: Experiment):
     mae_value_st = mean_absolute_error(y_test[:, 1], y_pred[:, 1])
     e.log(f' * S_t - R2: {r2_value_st:3f}, MAE: {mae_value_st:.3f}')
     
+    # We also want to save all the resulting metrics to the experiment registry so that we can easily access 
+    # them later on again.
     e['y/test/pred'] = y_pred
     e['y/test/true'] = y_test
     
@@ -316,6 +359,9 @@ def experiment(e: Experiment):
         )
         flip_diffs.append(flip_diff)
         
+    # ~ invariance result table
+    # Here we automatically render a table with the results on the shift and flip invariance evaluation.
+    
     e.log('aggregating invariance evaluations...')
     shift_diffs = np.stack(shift_diffs, axis=0)
     flip_diffs = np.stack(flip_diffs, axis=0)
