@@ -28,11 +28,6 @@ SOURCE_PATH: str = os.path.join(EXPERIMENTS_PATH, 'assets', 'dataset')
 # == MODEL PARAMETERS ==
 # Parameters related to the construction of the model
 
-
-
-# == TRANING PARAMETERS ==
-# Parameters related to the training process of the model
-
 # :param CONV_UNITS:
 #       The number of convolutional units to use for the model. This should be a list of integers where
 #       each integer represents the number of filters to use for each convolutional layer. Each integer
@@ -51,6 +46,9 @@ KERNEL_SIZE: int = 8
 #       Whether to use the Adaptive Polyphase Sampling (APS) layer in the model. If set to True, the model will
 #       use the APS layer after each convolutional layer to perform the strided downsampling.
 USE_APS: bool = True
+
+# == TRANING PARAMETERS ==
+# Parameters related to the training process of the model
 
 # :param EPOCHS:
 #       The number of epochs to train the model for.
@@ -221,11 +219,11 @@ def experiment(e: Experiment):
     model = InvariantCNN(
         input_dim=1, 
         input_shape=input_shape,
-        conv_units=[16, 32, 64, 128, 256],
-        dense_units=[256, 128, 64, 2],
+        conv_units=e.CONV_UNITS,
+        dense_units=e.DENSE_UNITS,
         learning_rate=e.LEARNING_RATE,
-        kernel_size=8,
-        use_aps=True,
+        kernel_size=e.KERNEL_SIZE,
+        use_aps=e.USE_APS,
     )
     e.log('model summary:')
     e.log(str(model))
