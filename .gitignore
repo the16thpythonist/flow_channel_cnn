@@ -1,0 +1,9 @@
+.identity.json
+.vscode/*
+
+*/experiments/assets/*
+*/experiments/results/*
+
+*/lightning_logs
+
+*/__pycache__/*
