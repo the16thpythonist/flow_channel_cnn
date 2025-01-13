@@ -50,3 +50,33 @@ class AdaptivePolyphaseSampling(nn.Module):
         
         return selected
 
+
+class ResBlock2D(nn.Module):
+    
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
+        """
+        A simple 2D Residual Block.
+        Args:
+            in_channels (int): The number of input channels.
+            out_channels (int): The number of output channels.
+            kernel_size (int): The size of the convolutional kernel.
+            stride (int): The stride of the convolutional kernel.
+            padding (int): The padding of the convolutional kernel.
+        """
+        super(ResBlock2D, self).__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(),
+            nn.Conv2d(out_channels, out_channels, kernel_size, stride, padding),
+            nn.BatchNorm2d(out_channels)
+        )
+        
+        # Linear layer for identity mapping
+        self.identity_mapping = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=False)
+        
+    def forward(self, x):
+        identity = self.identity_mapping(x)
+        out = self.conv(x)
+        out = out + identity
+        return out

@@ -27,8 +27,8 @@ SOURCE_PATH: str = os.path.join(EXPERIMENTS_PATH, 'assets', 'dataset')
 
 # == TRANING PARAMETERS ==
 
-EPOCHS: int = 10
-BATCH_SIZE: int = 32
+EPOCHS: int = 50
+BATCH_SIZE: int = 20
 LEARNING_RATE: float = 1e-4
 
 # == EVALUATION PARAMETERS ==
@@ -106,7 +106,8 @@ def experiment(e: Experiment):
     model = ChannelVAE(
         input_channels=1,
         input_shape=input_shape,
-        units=[128, 128, 128, 128, 128, 8],
+        units=[128, 128, 128, 128, 128, 16],
+        discriminator_units=[128, 128, 128, 16],
         latent_dim=512,
         learning_rate=e.LEARNING_RATE,
         kl_factor=1e-10,

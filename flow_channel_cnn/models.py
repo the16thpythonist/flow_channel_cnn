@@ -9,9 +9,11 @@ import torch.nn.functional as F
 import numpy as np
 from torch import Tensor
 from torch.utils.data import DataLoader
+from torch.distributions import Normal
 from sklearn.preprocessing import StandardScaler
 
 from flow_channel_cnn.layers import AdaptivePolyphaseSampling
+from flow_channel_cnn.layers import ResBlock2D
 
 
 # == CONVOLUTIONAL NEURAL NETWORK MODELS ==
@@ -385,7 +387,7 @@ class WarmupKLScheduler(pl.Callback):
 
     def __init__(self, 
                     value_start: float = 1e-10, 
-                    value_end: float = 1.0, 
+                    value_end: float = 5.0, 
                     warmup_steps: int = 10_000,
                     ) -> None:
         super().__init__()
@@ -471,12 +473,12 @@ class ChannelVAE(pl.LightningModule):
                     in_channels=prev_units, 
                     out_channels=units, 
                     kernel_size=self.kernel_size,
-                    stride=self.stride, 
-                    padding=1,
-                    padding_mode='replicate',
+                    stride=1, 
+                    padding=1
                 ),
                 nn.BatchNorm2d(units),
                 nn.ReLU(),
+                nn.MaxPool2d(kernel_size=self.stride, stride=self.stride),
             )
             self.encoder_layers.append(lay)
             prev_units = units
@@ -502,30 +504,29 @@ class ChannelVAE(pl.LightningModule):
         prev_units = self.units[-1]
         for units in list(reversed(self.units[:-1])):
             lay = nn.Sequential(
-                nn.ConvTranspose2d(
+                nn.Conv2d(
                     in_channels=prev_units, 
                     out_channels=units, 
                     kernel_size=self.kernel_size,
-                    stride=self.stride,
-                    output_padding=1, 
+                    stride=1,
                     padding=1,
-                    padding_mode='zeros',
                 ),
                 nn.BatchNorm2d(units),
                 nn.ReLU(),
+                nn.Upsample(scale_factor=self.stride),
             )
             self.decoder_layers.append(lay)
             prev_units = units
             
         lay = nn.Sequential(
-            nn.ConvTranspose2d(
+            nn.Conv2d(
                 in_channels=prev_units, 
                 out_channels=input_channels, 
                 kernel_size=self.kernel_size,
-                stride=self.stride,
-                output_padding=1, 
+                stride=1,
                 padding=1
             ),
+            nn.Upsample(scale_factor=self.stride),
             nn.Sigmoid(),
         )
         self.decoder_layers.append(lay)
@@ -542,12 +543,11 @@ class ChannelVAE(pl.LightningModule):
                     in_channels=prev_units, 
                     out_channels=units, 
                     kernel_size=3,
-                    stride=self.stride, 
+                    stride=1, 
                     padding=1,
-                    padding_mode='replicate',
                 ),
-                nn.BatchNorm2d(units),
                 nn.ReLU(),
+                nn.MaxPool2d(kernel_size=self.stride, stride=self.stride),
             )
             self.discriminator_layers.append(lay)
             prev_units = units
@@ -605,6 +605,16 @@ class ChannelVAE(pl.LightningModule):
             
         return z
 
+    def sample_latent(self) -> torch.Tensor:
+        
+        # Example VAE components
+        mu = torch.zeros(self.latent_dim)  # Example mean from encoder
+        sigma = torch.ones(self.latent_dim)  # Example standard deviation from encoder
+
+        # Step 1: Sample from latent space
+        std_normal = Normal(mu, sigma)
+        return std_normal.sample()
+
     def forward(self, x):
         mu, log_var = self.encode(x)
         z = self.reparameterize(mu, log_var)
@@ -631,8 +641,11 @@ class ChannelVAE(pl.LightningModule):
         
         u_fake = self.discriminate(x_recon)
         loss_gen_fake = F.binary_cross_entropy(u_fake, torch.ones_like(u_fake))
+        x_rand = self.decode(torch.randn_like(mu).to(self.device))
+        u_rand = self.discriminate(x_rand)
+        loss_gen_rand = F.binary_cross_entropy(u_rand, torch.ones_like(u_rand))
         
-        loss_vae = 1000 * recon_loss + self.kl_factor * kl_loss + 10 * loss_gen_fake
+        loss_vae = 1000 * recon_loss + self.kl_factor * kl_loss + 1 * (loss_gen_fake + loss_gen_rand)
         
         opt_vae.zero_grad()
         self.manual_backward(loss_vae)
@@ -670,7 +683,7 @@ class ChannelVAE(pl.LightningModule):
             list(self.decoder_layers.parameters()), 
             lr=self.learning_rate
         )
-        opt_disc = torch.optim.Adam(self.discriminator_layers.parameters(), lr=self.learning_rate * 0.01)
+        opt_disc = torch.optim.Adam(self.discriminator_layers.parameters(), lr=self.learning_rate)
         return opt_vae, opt_disc
     
     def configure_callbacks(self):
