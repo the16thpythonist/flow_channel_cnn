@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class AdaptivePolyphaseSampling(nn.Module):
@@ -31,6 +32,13 @@ class AdaptivePolyphaseSampling(nn.Module):
         :returns: torch.Tensor of the shape (batch_size, channels, height // stride, width // stride)
         """
         b, c, h, w = x.shape
+        
+        pad_h = (0, 1) if h % 2 != 0 else (0, 0)  # Add 1 row if height is odd
+        pad_w = (0, 1) if w % 2 != 0 else (0, 0)  # Add 1 column if width is odd
+
+        # Apply circular padding
+        x = F.pad(x, pad_w + pad_h, mode='circular')
+        
         s = self.stride
         # Generate polyphase components
         # polyphase: (stride^2, batch_size, channels, height, width)
@@ -46,7 +54,8 @@ class AdaptivePolyphaseSampling(nn.Module):
         # Select the component with the maximum norm
         max_indices = torch.argmax(norms, dim=0)  # Shape: (batch_size,)
         # Apply stride to the selected components
-        selected = torch.stack([polyphase[i][batch_idx] for batch_idx, i in enumerate(max_indices)], dim=0)
+        selected = [polyphase[i][batch_idx] for batch_idx, i in enumerate(max_indices)]
+        selected = torch.stack(selected, dim=0)
         
         return selected
 

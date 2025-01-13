@@ -52,13 +52,16 @@ USE_APS: bool = True
 
 # :param EPOCHS:
 #       The number of epochs to train the model for.
-EPOCHS: int = 100
+EPOCHS: int = 1
 # :param BATCH_SIZE:
 #       The batch size to use for training.
 BATCH_SIZE: int = 16
 # :param LEARNING_RATE:
 #       The learning rate to use for training.
 LEARNING_RATE: float = 1e-5
+# :param DEVICE:
+#       The device to use for training. This should be either 'cpu' or 'cuda'.
+DEVICE: str = 'cpu'
 
 # == EVALUATION PARAMETERS ==
 
@@ -200,12 +203,15 @@ def experiment(e: Experiment):
     e.log('loading flow channel dataset...')
     train, test = load_dataset(e)
     x_train = np.array([x.transpose(2, 0, 1) for x, _ in train])[:, :, :128, :]
+    x_train = np.array([x.transpose(2, 0, 1) for x, _ in train])[:, :, :, :]
+    
     # Scale the target values
     scaler = StandardScaler()
     y_train = np.array([y for _, y in train])
     y_train = scaler.fit_transform(y_train)
     
     x_test = np.array([x.transpose(2, 0, 1) for x, _ in test])[:, :, :128, :]
+    x_test = np.array([x.transpose(2, 0, 1) for x, _ in test])[:, :, :, :]
     y_test = np.array([y for _, y in test])
     #y_test = scaler.transform(y_test)
     
@@ -255,7 +261,7 @@ def experiment(e: Experiment):
 
     # Train the model
     e.log('training model...')
-    trainer = pl.Trainer(max_epochs=e.EPOCHS)
+    trainer = pl.Trainer(max_epochs=e.EPOCHS, accelerator='cpu')
     trainer.fit(model, train_loader, test_loader)
     model.eval()
     
