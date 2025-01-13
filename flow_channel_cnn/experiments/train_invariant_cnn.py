@@ -1,6 +1,6 @@
 import os
 import random
-from typing import Tuple, List, Any
+from typing import Tuple, List, Any, Union
 
 import torch
 import numpy as np
@@ -15,7 +15,7 @@ from pycomex.utils import folder_path, file_namespace
 
 from flow_channel_cnn.models import InvariantCNN
 from flow_channel_cnn.utils import EXPERIMENTS_PATH
-from flow_channel_cnn.utils import render_latex, latex_table 
+from flow_channel_cnn.utils import render_latex, latex_table
 
 # == SOURCE PARAMETERS ==
 # The path to the source dataset folder
@@ -24,6 +24,11 @@ from flow_channel_cnn.utils import render_latex, latex_table
 #       The path to the source dataset folder. THis folder should contain specific .NPY files which 
 #       contain the images and the labels of the dataset.
 SOURCE_PATH: str = os.path.join(EXPERIMENTS_PATH, 'assets', 'dataset')
+# :param NUM_VAL:
+#       The number of validation samples to use for the model. This should be a number between 0 and 1.
+#       If set to 0.1, 10% of the training samples will be used for validation. Could also be set to an integer
+#       value to specify the number of samples to use.
+NUM_VAL: Union[int, float] = 0.05
 
 # == MODEL PARAMETERS ==
 # Parameters related to the construction of the model
@@ -80,7 +85,7 @@ experiment = Experiment(
 )
 
 def load_dataset(e: Experiment
-                 ) -> Tuple[list, list]:
+                 ) -> Tuple[list, list, list]:
     """
     Loads the dataset and returns it as a tuple (train_list, test_list) of lists where the 
     first element is a list containing tuples (x, y) of the training set samples and the second 
@@ -108,9 +113,23 @@ def load_dataset(e: Experiment
     y_flat_path = os.path.join(e.SOURCE_PATH, 'y_flat.npy')
     y_flat = np.load(y_flat_path)
     
+    full = [(x, y) for x, y in zip(x_train, y_train)] + [(x, y) for x, y in zip(x_flat[5:], y_flat[5:])]
+    test = [(x, y) for x, y in zip(x_test, y_test)] + [(x, y) for x, y in zip(x_flat[:5], y_flat[:5])]
+    
+    num_val: int = e.NUM_VAL if isinstance(e.NUM_VAL, int) else int(len(full) * e.NUM_VAL)
+    print(f'using {num_val} validation samples...')
+    indices = list(range(len(full) - 1))
+    
+    indices_val = random.sample(indices, k=num_val)
+    indices_train = list(set(indices) - set(indices_val))
+    
+    train = [full[i] for i in indices_train]
+    val = [full[i] for i in indices_val]
+    
     return (
-        [(x, y) for x, y in zip(x_train, y_train)] + [(x, y) for x, y in zip(x_flat[5:], y_flat[5:])],
-        [(x, y) for x, y in zip(x_test, y_test)] + [(x, y) for x, y in zip(x_flat[:5], y_flat[:5])],
+        train,
+        val,
+        test,
     )
 
 
@@ -201,7 +220,7 @@ def experiment(e: Experiment):
     
     # ~ data loading
     e.log('loading flow channel dataset...')
-    train, test = load_dataset(e)
+    train, val, test = load_dataset(e)
     x_train = np.array([x.transpose(2, 0, 1) for x, _ in train])[:, :, :128, :]
     x_train = np.array([x.transpose(2, 0, 1) for x, _ in train])[:, :, :, :]
     
@@ -209,6 +228,11 @@ def experiment(e: Experiment):
     scaler = StandardScaler()
     y_train = np.array([y for _, y in train])
     y_train = scaler.fit_transform(y_train)
+    
+    x_val = np.array([x.transpose(2, 0, 1) for x, _ in val])[:, :, :128, :]
+    x_val = np.array([x.transpose(2, 0, 1) for x, _ in val])[:, :, :, :]
+    y_val = np.array([y for _, y in val])
+    y_val = scaler.transform(y_val)
     
     x_test = np.array([x.transpose(2, 0, 1) for x, _ in test])[:, :, :128, :]
     x_test = np.array([x.transpose(2, 0, 1) for x, _ in test])[:, :, :, :]
@@ -239,12 +263,16 @@ def experiment(e: Experiment):
     x_train_tensor = torch.tensor(x_train, dtype=torch.float32)
     y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
     
+    x_val_tensor = torch.tensor(x_val, dtype=torch.float32)
+    y_val_tensor = torch.tensor(y_val, dtype=torch.float32)
+    
     x_test_tensor = torch.tensor(x_test, dtype=torch.float32)
     y_test_tensor = torch.tensor(y_test, dtype=torch.float32)
 
     # Create datasets
     e.log('creating tensor datasets...')
     train_dataset = TensorDataset(x_train_tensor, y_train_tensor)
+    val_dataset= TensorDataset(x_val_tensor, y_val_tensor)
     test_dataset = TensorDataset(x_test_tensor, y_test_tensor)
 
     # Create data loaders
@@ -252,6 +280,11 @@ def experiment(e: Experiment):
         train_dataset, 
         batch_size=e.BATCH_SIZE, 
         shuffle=True
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=e.BATCH_SIZE,
+        shuffle=False
     )
     test_loader = DataLoader(
         test_dataset, 
@@ -261,8 +294,12 @@ def experiment(e: Experiment):
 
     # Train the model
     e.log('training model...')
-    trainer = pl.Trainer(max_epochs=e.EPOCHS, accelerator='cpu')
-    trainer.fit(model, train_loader, test_loader)
+    trainer = pl.Trainer(max_steps=3, max_epochs=e.EPOCHS, accelerator='cpu')
+    try:
+        trainer.fit(model, train_loader, val_loader)
+    except KeyboardInterrupt:
+        trainer.should_stop = True
+        
     model.eval()
     
     model.set_scaler(scaler)

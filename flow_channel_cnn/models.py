@@ -7,6 +7,7 @@ import torch.nn as nn
 import pytorch_lightning as pl
 import torch.nn.functional as F
 import numpy as np
+from torchmetrics import R2Score
 from torch import Tensor
 from torch.utils.data import DataLoader
 from torch.distributions import Normal
@@ -14,6 +15,8 @@ from sklearn.preprocessing import StandardScaler
 
 from flow_channel_cnn.layers import AdaptivePolyphaseSampling
 from flow_channel_cnn.layers import ResBlock2D
+from flow_channel_cnn.utils import GracefulTermination
+from flow_channel_cnn.utils import BestModelRestorer
 
 
 # == CONVOLUTIONAL NEURAL NETWORK MODELS ==
@@ -314,6 +317,10 @@ class InvariantCNN(AbstractCNN):
         # task here.
         lay = nn.Linear(prev_units, dense_units[-1])
         self.layers_dense.append(lay)
+
+        # The metric instance that will be used to calculate the R2 score of the model during 
+        # the validation step.
+        self.metric = R2Score()
         
     def embedd_single(self, 
                       x: torch.Tensor
@@ -376,8 +383,28 @@ class InvariantCNN(AbstractCNN):
         self.log('train_loss', loss, prog_bar=True, on_epoch=True)
         return loss
     
+    def validation_step(self, 
+                        batch: tuple, 
+                        batch_idx: int
+                        ) -> torch.Tensor:
+        x, y_true = batch
+        y_pred = self(x)
+        loss = F.mse_loss(y_pred, y_true)
+        self.log('val_loss', loss, prog_bar=True, on_epoch=True)
+        
+        metric = self.metric(y_pred, y_true)
+        self.log('val_metric', metric, prog_bar=True, on_epoch=True)
+        
+        return loss
+    
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+    
+    def configure_callbacks(self):
+        return [
+            GracefulTermination(),
+            BestModelRestorer("val_metric", mode="min"),
+        ]
     
 
 # == VARIATIONAL AUTOENCODER ==

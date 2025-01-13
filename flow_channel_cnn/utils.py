@@ -1,4 +1,5 @@
 import os
+import time
 import shutil
 import pathlib
 import logging
@@ -11,6 +12,7 @@ from typing import List, Tuple, Union, Callable
 import click
 import jinja2 as j2
 import numpy as np
+import pytorch_lightning as pl
 
 
 PATH = pathlib.Path(__file__).parent.absolute()
@@ -57,6 +59,103 @@ class CsvString(click.ParamType):
 
         else:
             return value.split(',')
+
+
+# == PYTORCH LIGHTNING ==
+
+class BestModelRestorer(pl.Callback):
+    """
+    A callback class that keeps track of the best model according to a given metric and restores the state of the 
+    model at which it achieved that best score at the end of the training.
+    
+    Note: the actual weights of the model at the end of the training will be replaced when this callback is used!
+    """
+    
+    def __init__(self, monitor: str = "val_loss", mode: str = "min"):
+        """
+        :param monitor: The metric to monitor. This should be a key in the dictionary of metrics defined in the 
+            `training_step` or `validation_step` methods of the LightningModule.
+        :param mode: Whether to minimize or maximize the monitored metric. One of "min" or "max".
+        """
+        super().__init__()
+        self.monitor = monitor
+        if mode not in ["min", "max"]:
+            raise ValueError("mode must be 'min' or 'max'.")
+        self.mode = mode
+
+        self.best_score = None
+        self.best_state_dict = None
+        self.best_time = None
+
+    def on_fit_start(self, trainer, pl_module) -> None:
+        """
+        This method is called before starting to fit the model.
+        
+        Initialize the best score before starting the fit.
+        """
+        if self.mode == "min":
+            self.best_score = float("inf")
+        else:
+            self.best_score = -float("inf")
+        self.best_state_dict = None
+
+    def on_validation_end(self, trainer, pl_module):
+        """
+        Called at the end of the validation loop. We check whether the monitored metric improved
+        and if so, store the model state dict and log the improvement.
+        """
+        metrics = trainer.callback_metrics
+        current_score = metrics.get(self.monitor)
+
+        if current_score is None:
+            # Metric not found, cannot update best score
+            return
+
+        if (
+            (self.mode == "min" and current_score < self.best_score) or
+            (self.mode == "max" and current_score > self.best_score)
+        ):
+            # Update best score and store model weights
+            self.best_score = current_score
+            self.best_state_dict = {
+                k: v.cpu() for k, v in pl_module.state_dict().items()
+            }
+            self.best_time = time.time()
+
+            # Log the new best score (if the logger is available)
+            if trainer.logger is not None:
+                trainer.logger.log_metrics({f"best_{self.monitor}": current_score}, step=trainer.global_step)
+                
+            # You could also print a message if desired:
+            trainer.print(
+                f"New best {self.monitor}={current_score:.4f} at step={trainer.global_step}."
+            )
+
+    def on_train_end(self, trainer, pl_module):
+        """
+        This method is called at the end of the model.
+        
+        At the end of training, restore the model to the best recorded state.
+        """
+        if self.best_state_dict is not None:
+            pl_module.load_state_dict(self.best_state_dict)
+            trainer.print(
+                f"Restored the best model with {self.monitor}={self.best_score:.4f}."
+            )
+
+
+class GracefulTermination(pl.Callback):
+    """
+    A callback that stops the model training when receiving a keyboard interrupt (Ctrl+C) but allows the code execution to continue.
+    """
+
+    def on_keyboard_interrupt(self, trainer, pl_module):
+        """
+        This method is called when a keyboard interrupt is received.
+        """
+        trainer.should_stop = True
+        trainer.print("Keyboard interrupt received. Stopping training gracefully.")
+
 
 
 # == STRING UTILITY ==
