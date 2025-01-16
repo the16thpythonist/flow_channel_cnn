@@ -57,7 +57,7 @@ USE_APS: bool = True
 
 # :param EPOCHS:
 #       The number of epochs to train the model for.
-EPOCHS: int = 1
+EPOCHS: int = 100
 # :param BATCH_SIZE:
 #       The batch size to use for training.
 BATCH_SIZE: int = 16
@@ -221,7 +221,7 @@ def experiment(e: Experiment):
     # ~ data loading
     e.log('loading flow channel dataset...')
     train, val, test = load_dataset(e)
-    x_train = np.array([x.transpose(2, 0, 1) for x, _ in train])[:, :, :128, :]
+    #x_train = np.array([x.transpose(2, 0, 1) for x, _ in train])[:, :, :128, :]
     x_train = np.array([x.transpose(2, 0, 1) for x, _ in train])[:, :, :, :]
     
     # Scale the target values
@@ -229,12 +229,12 @@ def experiment(e: Experiment):
     y_train = np.array([y for _, y in train])
     y_train = scaler.fit_transform(y_train)
     
-    x_val = np.array([x.transpose(2, 0, 1) for x, _ in val])[:, :, :128, :]
+    #x_val = np.array([x.transpose(2, 0, 1) for x, _ in val])[:, :, :128, :]
     x_val = np.array([x.transpose(2, 0, 1) for x, _ in val])[:, :, :, :]
     y_val = np.array([y for _, y in val])
     y_val = scaler.transform(y_val)
     
-    x_test = np.array([x.transpose(2, 0, 1) for x, _ in test])[:, :, :128, :]
+    #x_test = np.array([x.transpose(2, 0, 1) for x, _ in test])[:, :, :128, :]
     x_test = np.array([x.transpose(2, 0, 1) for x, _ in test])[:, :, :, :]
     y_test = np.array([y for _, y in test])
     #y_test = scaler.transform(y_test)
@@ -283,7 +283,7 @@ def experiment(e: Experiment):
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=e.BATCH_SIZE,
+        batch_size=e.BATCH_SIZE * 2,
         shuffle=False
     )
     test_loader = DataLoader(
@@ -294,7 +294,7 @@ def experiment(e: Experiment):
 
     # Train the model
     e.log('training model...')
-    trainer = pl.Trainer(max_steps=3, max_epochs=e.EPOCHS, accelerator='cpu')
+    trainer = pl.Trainer(max_epochs=e.EPOCHS)
     try:
         trainer.fit(model, train_loader, val_loader)
     except KeyboardInterrupt:

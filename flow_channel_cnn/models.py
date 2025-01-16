@@ -392,10 +392,13 @@ class InvariantCNN(AbstractCNN):
         loss = F.mse_loss(y_pred, y_true)
         self.log('val_loss', loss, prog_bar=True, on_epoch=True)
         
-        metric = self.metric(y_pred, y_true)
-        self.log('val_metric', metric, prog_bar=True, on_epoch=True)
+        self.metric.update(y_pred, y_true)
         
         return loss
+    
+    def on_validation_epoch_end(self):
+        self.log('val_metric', self.metric.compute(), on_epoch=True, prog_bar=True, logger=True)
+        self.metric.reset()
     
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
@@ -403,7 +406,7 @@ class InvariantCNN(AbstractCNN):
     def configure_callbacks(self):
         return [
             GracefulTermination(),
-            BestModelRestorer("val_metric", mode="min"),
+            BestModelRestorer("val_metric", mode="max"),
         ]
     
 
