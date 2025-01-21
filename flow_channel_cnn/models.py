@@ -410,6 +410,217 @@ class InvariantCNN(AbstractCNN):
         ]
     
 
+class StandardCNN(AbstractCNN):
+    """
+    Standard CNN model without any considerations towards shift and flip invariance.
+    
+    :param input_dim: The number of channels in the input images.
+    :param input_shape: A tuple (height, width) that specifies the dimensions of the input images.
+    :param conv_units: A list of integers that specify the number of units (=channels) in the corresponding layers.
+    :param dense_units: A list of integers that specify the number of units in the corresponding layers of the dense
+        prediction part of the network. This part of the network is used to make the final prediction.
+    :param learning_rate: The learning rate to use for the optimizer.
+    :param kernel_size: The kernel size to use for the convolutional layers.
+    :param stride: The stride to use for the downsampling in the convolutional layers.
+    """
+    
+    def __init__(self, 
+                 input_dim: int, 
+                 input_shape: Tuple[int, int],
+                 conv_units: List[int] = [64, 64, 64], 
+                 dense_units: List[int] = [64, 32, 2],
+                 learning_rate: float = 1e-3,
+                 kernel_size: int = 4,
+                 stride: int = 2,
+                 **kwargs,
+                 ):
+        """
+        Initialize the StandardCNN model.
+        
+        :param input_dim: The number of channels in the input images.
+        :param input_shape: A tuple (height, width) that specifies the dimensions of the input images.
+        :param conv_units: A list of integers that specify the number of units (=channels) in the corresponding layers.
+        :param dense_units: A list of integers that specify the number of units in the corresponding layers of the dense
+            prediction part of the network.
+        :param learning_rate: The learning rate to use for the optimizer.
+        :param kernel_size: The kernel size to use for the convolutional layers.
+        :param stride: The stride to use for the downsampling in the convolutional layers.
+        """
+        super().__init__(**kwargs)
+        
+        self.input_dim = input_dim
+        self.input_shape = input_shape
+        self.conv_units = conv_units
+        self.dense_units = dense_units
+        self.learning_rate = learning_rate
+        self.kernel_size = kernel_size
+        self.stride = stride
+        
+        height, width = self.input_shape
+        self.hparams.update({
+            'input_dim': input_dim,
+            'input_shape': input_shape,
+            'conv_units': conv_units,
+            'dense_units': dense_units,
+            'learning_rate': learning_rate,
+            'kernel_size': kernel_size,
+            'stride': stride,
+        })
+    
+        _height = height
+        _width = width
+        self.embedding_size: int = 0
+        
+        # ~ convolutional encoder
+        
+        self.layers_conv = nn.ModuleList()
+        prev_units = input_dim
+        for units in conv_units:
+            
+            modules = [
+                nn.Conv2d(
+                    in_channels=prev_units,
+                    out_channels=units,
+                    kernel_size=self.kernel_size,
+                    stride=1,
+                    padding=self.kernel_size // 2,
+                    padding_mode='circular',
+                ),
+                nn.BatchNorm2d(units),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+            ]
+            
+            lay = nn.Sequential(*modules)
+            self.layers_conv.append(lay)
+            prev_units = units  
+            
+            _height = math.ceil(_height / 2)
+            _width = math.ceil(_width / 2)
+            self.embedding_size = units * _height * _width
+        
+        # ~ dense prediction network
+        
+        prev_units = self.embedding_size
+        self.layers_dense = nn.ModuleList()
+        for units in dense_units[:-1]:
+            lay = nn.Sequential(
+                nn.Linear(prev_units, units),
+                nn.BatchNorm1d(units),
+                nn.ReLU(),
+            )
+            self.layers_dense.append(lay)
+            prev_units = units
+
+        lay = nn.Linear(prev_units, dense_units[-1])
+        self.layers_dense.append(lay)
+
+        self.metric = R2Score()
+        
+    def embedd_single(self, 
+                      x: torch.Tensor
+                      ) -> torch.Tensor:
+        """
+        Given the input tensor ``x``, this method will pass it through the convolutional layers of the network
+        and return the flattened result after the last convolutional layer.
+        
+        :param x: The input tensor of shape (batch_size, num_channels, height, width).
+        
+        :returns: The embedded vector.
+        """
+        for lay in self.layers_conv:
+            x = lay(x)
+        
+        print(x.shape)
+        embedding = torch.flatten(x, start_dim=1)
+        return embedding
+        
+    def forward(self,
+                x: torch.Tensor,
+                ) -> torch.Tensor:
+        """
+        Perform a single forward pass on the input tensor ``x`` of the shape (batch_size, num_channels, height, width) 
+        and return a final prediction tensor with the shape (batch_size, num_outputs).
+        
+        :param x: The input tensor of shape (batch_size, num_channels, height, width).
+        
+        :returns: The output prediction tensor of shape (batch_size, num_outputs).
+        """
+        emb = self.embedd_single(x)
+        
+        out = emb
+        for lay in self.layers_dense:
+            out = lay(out)
+            
+        return out
+    
+    def training_step(self, 
+                      batch: tuple, 
+                      batch_idx: int
+                      ) -> torch.Tensor:
+        """
+        Calculate the training loss function which will then internally be used to update the weights of the network 
+        with a single training ``batch``.
+        
+        :param batch: A tuple containing the input tensor and the ground truth tensor.
+        :param batch_idx: The index of the batch.
+        
+        :returns: The training loss.
+        """
+        x, y_true = batch
+        y_pred = self(x)
+        loss = F.mse_loss(y_pred, y_true)
+        self.log('train_loss', loss, prog_bar=True, on_epoch=True)
+        return loss
+    
+    def validation_step(self, 
+                        batch: tuple, 
+                        batch_idx: int
+                        ) -> torch.Tensor:
+        """
+        Calculate the validation loss function for a single validation ``batch``.
+        
+        :param batch: A tuple containing the input tensor and the ground truth tensor.
+        :param batch_idx: The index of the batch.
+        
+        :returns: The validation loss.
+        """
+        x, y_true = batch
+        y_pred = self(x)
+        loss = F.mse_loss(y_pred, y_true)
+        self.log('val_loss', loss, prog_bar=True, on_epoch=True)
+        
+        self.metric.update(y_pred, y_true)
+        
+        return loss
+    
+    def on_validation_epoch_end(self):
+        """
+        Log the validation metric at the end of each validation epoch.
+        """
+        self.log('val_metric', self.metric.compute(), on_epoch=True, prog_bar=True, logger=True)
+        self.metric.reset()
+    
+    def configure_optimizers(self):
+        """
+        Configure the optimizer for the model.
+        
+        :returns: The optimizer.
+        """
+        return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+    
+    def configure_callbacks(self):
+        """
+        Configure the callbacks for the model.
+        
+        :returns: A list of callbacks.
+        """
+        return [
+            GracefulTermination(),
+            BestModelRestorer("val_metric", mode="max"),
+        ]
+    
+
 # == VARIATIONAL AUTOENCODER ==
     
     

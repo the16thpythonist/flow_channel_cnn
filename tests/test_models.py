@@ -9,6 +9,7 @@ from sklearn.preprocessing import StandardScaler
 from flow_channel_cnn.models import AbstractCNN
 from flow_channel_cnn.models import InvariantCNN
 from flow_channel_cnn.models import ChannelVAE
+from flow_channel_cnn.models import StandardCNN
 from pytorch_lightning.utilities.model_summary import ModelSummary
 
 from .utils import ARTIFACTS_PATH
@@ -82,7 +83,9 @@ class TestInvariantCNN:
         print(summary)
                 
     def test_forward_basically_works(self):
-        
+        """
+        Test if the forward pass of the model works with random input data.
+        """
         # First of all we need to generate some kind of input data with which we can test 
         # the forward method of the model. We will use random data for this purpose.
         batch_size = 32
@@ -100,7 +103,9 @@ class TestInvariantCNN:
         assert out.shape == (batch_size, 2)
         
     def test_backward_basically_works(self):
-        
+        """
+        Test if the backward pass of the model works with random input data and target labels.
+        """
         batch_size = 32
         num_channels = 1
         width = 400
@@ -126,7 +131,9 @@ class TestInvariantCNN:
         assert loss.item() > 0
         
     def test_flip_invariance(self):
-        
+        """
+        Test if the model is invariant to vertical flipping of the input data.
+        """
         # here we initialize a random input tensor and it's flipped version.
         width, height = 400, 100
         x = torch.tensor(np.random.rand(1, 1, height, width), dtype=torch.float32)
@@ -243,9 +250,14 @@ class TestInvariantCNN:
             
             
 class TestChannelVAE:
+    """
+    Unittests for the ChannelVAE class which is a variational autoencoder model for channel data.
+    """
     
     def test_construction_basically_works(self):
-        
+        """
+        Basic test if instantiation of a new model instance works.
+        """
         model = ChannelVAE(
             input_channels=1,
             input_shape=(100, 100),
@@ -263,7 +275,9 @@ class TestChannelVAE:
         print('pre latent dim', model.pre_latent_dim)
         
     def test_encode_basically_works(self):
-        
+        """
+        Test if the encode method of the model works with random input data.
+        """
         model = ChannelVAE(
             input_channels=1,
             input_shape=(128, 128),
@@ -282,7 +296,9 @@ class TestChannelVAE:
         assert log_var.shape == (32, 128)
         
     def test_encode_decode_basically_works(self):
-        
+        """
+        Test if the encode and decode methods of the model work with random input data.
+        """
         shape = (1, 128, 384)
         model = ChannelVAE(
             input_channels=shape[0],
@@ -300,3 +316,89 @@ class TestChannelVAE:
         x_recon = model.decode(z)
         
         assert x_recon.shape == x.shape
+
+
+class TestStandardCNN:
+    """
+    Unittests for the StandardCNN class which is a standard CNN model without any considerations towards shift and flip invariance.
+    """
+    
+    def test_construction_basically_works(self):
+        """
+        Basic test if instantiation of a new model instance works.
+        """
+        model = StandardCNN(
+            input_dim=3,
+            input_shape=(100, 100),
+        )
+        assert isinstance(model, pl.LightningModule)
+        assert isinstance(model, StandardCNN)
+
+        summary = ModelSummary(model)
+        print(summary)
+                
+    def test_forward_basically_works(self):
+        """
+        Test if the forward pass of the model works with random input data.
+        """
+        batch_size = 32
+        num_channels = 1
+        width = 400
+        height = 100
+        data = torch.tensor(np.random.rand(batch_size, num_channels, height, width), dtype=torch.float32)
+        
+        model = StandardCNN(
+            input_dim=num_channels, 
+            input_shape=(height, width),
+            dense_units=[64, 2],
+        )
+        out = model.forward(data)
+        assert out.shape == (batch_size, 2)
+        
+    def test_backward_basically_works(self):
+        """
+        Test if the backward pass of the model works with random input data and target labels.
+        """
+        batch_size = 32
+        num_channels = 1
+        width = 400
+        height = 100
+        data = torch.tensor(np.random.rand(batch_size, num_channels, height, width), dtype=torch.float32)
+        target = torch.tensor(np.random.randint(0, 2, size=(batch_size,)), dtype=torch.long)
+        
+        model = StandardCNN(
+            input_dim=num_channels, 
+            input_shape=(height, width),
+            dense_units=[64, 2],
+        )
+        
+        criterion = torch.nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(model.parameters())
+        
+        optimizer.zero_grad()
+        output = model.forward(data)
+        loss = criterion(output, target)
+        loss.backward()
+        optimizer.step()
+        
+        assert loss.item() > 0
+        
+    def test_saving_loading_works(self):
+        """
+        If it works to save a model to a checkpoint file and then load it again from that.
+        """
+        model = StandardCNN(
+            input_dim=3,
+            input_shape=(100, 100),
+        )
+        
+        with tempfile.TemporaryDirectory() as path:
+            model_path = os.path.join(path, 'model.ckpt')
+            model.save(model_path)
+        
+            model_loaded = model.load(model_path)
+            assert isinstance(model_loaded, AbstractCNN)
+            assert isinstance(model_loaded, StandardCNN)
+            
+            assert model_loaded.input_dim == 3
+            assert model_loaded.input_shape == (100, 100)
