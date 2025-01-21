@@ -531,7 +531,6 @@ class StandardCNN(AbstractCNN):
         for lay in self.layers_conv:
             x = lay(x)
         
-        print(x.shape)
         embedding = torch.flatten(x, start_dim=1)
         return embedding
         
@@ -620,6 +619,97 @@ class StandardCNN(AbstractCNN):
             BestModelRestorer("val_metric", mode="max"),
         ]
     
+
+class MockCNN(AbstractCNN):
+    """
+    Mock CNN model for testing purposes. This model generates outputs using simple linear layers for testing.
+    
+    :param input_dim: The number of channels in the input images.
+    :param input_shape: A tuple (height, width) that specifies the dimensions of the input images.
+    :param output_dim: The number of output dimensions.
+    :param learning_rate: The learning rate to use for the optimizer.
+    """
+    
+    def __init__(self, 
+                 input_dim: int, 
+                 input_shape: Tuple[int, int],
+                 output_dim: int = 2,
+                 learning_rate: float = 1e-3,
+                 **kwargs,
+                 ):
+        super().__init__(**kwargs)
+        
+        self.input_dim = input_dim
+        self.input_shape = input_shape
+        self.output_dim = output_dim
+        self.learning_rate = learning_rate
+        
+        self.hparams.update({
+            'input_dim': input_dim,
+            'input_shape': input_shape,
+            'output_dim': output_dim,
+            'learning_rate': learning_rate,
+        })
+        
+        # Calculate the flattened input size
+        self.flattened_input_size = input_dim * input_shape[0] * input_shape[1]
+        
+        # Define a simple linear layer
+        self.linear1 = nn.Linear(self.flattened_input_size, 128)
+        self.linear2 = nn.Linear(128, output_dim)
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Perform a single forward pass on the input tensor ``x`` and return an output tensor.
+        
+        :param x: The input tensor of shape (batch_size, num_channels, height, width).
+        
+        :returns: An output tensor of shape (batch_size, output_dim).
+        """
+        x = torch.flatten(x, start_dim=1)
+        x = F.relu(self.linear1(x))
+        x = self.linear2(x)
+        return x
+    
+    def training_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
+        """
+        Calculate the training loss function which will then internally be used to update the weights of the network 
+        with a single training ``batch``.
+        
+        :param batch: A tuple containing the input tensor and the ground truth tensor.
+        :param batch_idx: The index of the batch.
+        
+        :returns: The training loss.
+        """
+        x, y_true = batch
+        y_pred = self(x)
+        loss = F.mse_loss(y_pred, y_true)
+        self.log('train_loss', loss, prog_bar=True, on_epoch=True)
+        return loss
+    
+    def validation_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
+        """
+        Calculate the validation loss function for a single validation ``batch``.
+        
+        :param batch: A tuple containing the input tensor and the ground truth tensor.
+        :param batch_idx: The index of the batch.
+        
+        :returns: The validation loss.
+        """
+        x, y_true = batch
+        y_pred = self(x)
+        loss = F.mse_loss(y_pred, y_true)
+        self.log('val_loss', loss, prog_bar=True, on_epoch=True)
+        
+        return loss
+    
+    def configure_optimizers(self):
+        """
+        Configure the optimizer for the model.
+        
+        :returns: The optimizer.
+        """
+        return torch.optim.Adam(self.parameters(), lr=self.learning_rate)
 
 # == VARIATIONAL AUTOENCODER ==
     

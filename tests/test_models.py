@@ -10,6 +10,7 @@ from flow_channel_cnn.models import AbstractCNN
 from flow_channel_cnn.models import InvariantCNN
 from flow_channel_cnn.models import ChannelVAE
 from flow_channel_cnn.models import StandardCNN
+from flow_channel_cnn.models import MockCNN
 from pytorch_lightning.utilities.model_summary import ModelSummary
 
 from .utils import ARTIFACTS_PATH
@@ -399,6 +400,92 @@ class TestStandardCNN:
             model_loaded = model.load(model_path)
             assert isinstance(model_loaded, AbstractCNN)
             assert isinstance(model_loaded, StandardCNN)
+            
+            assert model_loaded.input_dim == 3
+            assert model_loaded.input_shape == (100, 100)
+
+
+class TestMockCNN:
+    """
+    Unittests for the MockCNN class which is a mock CNN model for testing purposes.
+    """
+    
+    def test_construction_basically_works(self):
+        """
+        Basic test if instantiation of a new model instance works.
+        """
+        model = MockCNN(
+            input_dim=3,
+            input_shape=(100, 100),
+        )
+        assert isinstance(model, pl.LightningModule)
+        assert isinstance(model, MockCNN)
+
+        summary = ModelSummary(model)
+        print(summary)
+                
+    def test_forward_basically_works(self):
+        """
+        Test if the forward pass of the model works with random input data.
+        """
+        batch_size = 32
+        num_channels = 1
+        width = 400
+        height = 100
+        data = torch.tensor(np.random.rand(batch_size, num_channels, height, width), dtype=torch.float32)
+        
+        model = MockCNN(
+            input_dim=num_channels, 
+            input_shape=(height, width),
+            output_dim=2,
+        )
+        out = model.forward(data)
+        assert out.shape == (batch_size, 2)
+        
+    def test_backward_basically_works(self):
+        """
+        Test if the backward pass of the model works with random input data and target labels.
+        """
+        batch_size = 32
+        num_channels = 1
+        width = 400
+        height = 100
+        data = torch.tensor(np.random.rand(batch_size, num_channels, height, width), dtype=torch.float32)
+        target = torch.tensor(np.random.rand(batch_size, 2), dtype=torch.float32)
+        
+        model = MockCNN(
+            input_dim=num_channels, 
+            input_shape=(height, width),
+            output_dim=2,
+        )
+        
+        criterion = torch.nn.MSELoss()
+        optimizer = torch.optim.Adam(model.parameters())
+        
+        optimizer.zero_grad()
+        output = model.forward(data)
+        loss = criterion(output, target)
+        loss.backward()
+        optimizer.step()
+        
+        assert loss.item() > 0
+        
+    def test_saving_loading_works(self):
+        """
+        If it works to save a model to a checkpoint file and then load it again from that.
+        """
+        model = MockCNN(
+            input_dim=3,
+            input_shape=(100, 100),
+        )
+        
+        with tempfile.TemporaryDirectory() as path:
+            model_path = os.path.join(path, 'model.ckpt')
+            model.save(model_path)
+        
+            model_loaded = model.load(model_path)
+            assert isinstance(model_loaded, AbstractCNN)
+            assert isinstance(model_loaded, MockCNN)
             
             assert model_loaded.input_dim == 3
             assert model_loaded.input_shape == (100, 100)
