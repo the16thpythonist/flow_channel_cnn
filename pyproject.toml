@@ -60,6 +60,16 @@ dependencies = [
     "msgpack_numpy>=0.4.8",
     "appdirs>=1.4.4,<2.0",
     "tomlkit>=0.13.2,<1.0",
+    "normflows>=1.7.0",
+]
+
+# Optional Dependencies
+# =====================
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "ruff>=0.1.0",
 ]
 
 # Executable Scripts

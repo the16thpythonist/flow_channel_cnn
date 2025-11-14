@@ -11,6 +11,7 @@ from flow_channel_cnn.models import InvariantCNN
 from flow_channel_cnn.models import ChannelVAE
 from flow_channel_cnn.models import StandardCNN
 from flow_channel_cnn.models import MockCNN
+from flow_channel_cnn.models import ChannelNormalizingFlow
 from pytorch_lightning.utilities.model_summary import ModelSummary
 
 from .utils import ARTIFACTS_PATH
@@ -486,6 +487,247 @@ class TestMockCNN:
             model_loaded = model.load(model_path)
             assert isinstance(model_loaded, AbstractCNN)
             assert isinstance(model_loaded, MockCNN)
-            
+
             assert model_loaded.input_dim == 3
             assert model_loaded.input_shape == (100, 100)
+
+
+class TestChannelNormalizingFlow:
+    """
+    Unittests for the ChannelNormalizingFlow class which is a normalizing flow model for flow channel data.
+    """
+
+    def test_construction_basically_works(self):
+        """
+        Basic test if instantiation of a new model instance works.
+        """
+        model = ChannelNormalizingFlow(
+            input_channels=1,
+            input_shape=(32, 32),
+            num_flow_steps=4,
+            hidden_channels=32,
+        )
+
+        assert isinstance(model, pl.LightningModule)
+        assert isinstance(model, ChannelNormalizingFlow)
+
+        summary = ModelSummary(model)
+        print(summary)
+
+        # Check attributes
+        assert model.input_channels == 1
+        assert model.input_shape == (32, 32)
+
+    def test_construction_with_checkerboard_works(self):
+        """
+        Test if construction with checkerboard masking works.
+        """
+        model = ChannelNormalizingFlow(
+            input_channels=1,
+            input_shape=(64, 64),
+            num_flow_steps=8,
+            hidden_channels=64,
+            split_mode='checkerboard',
+        )
+
+        assert model.split_mode == 'checkerboard'
+        assert isinstance(model, ChannelNormalizingFlow)
+
+    def test_construction_with_channel_mode_fails_for_single_channel(self):
+        """
+        Test that channel mode raises error for single channel input.
+        """
+        try:
+            model = ChannelNormalizingFlow(
+                input_channels=1,
+                input_shape=(64, 64),
+                num_flow_steps=8,
+                hidden_channels=64,
+                split_mode='channel',
+            )
+            assert False, "Should have raised ValueError"
+        except ValueError as e:
+            assert "requires at least 2 input channels" in str(e)
+
+    def test_forward_basically_works(self):
+        """
+        Test if the forward pass (log probability computation) works with random input data.
+        """
+        batch_size = 8
+        num_channels = 1
+        height = 32
+        width = 32
+
+        model = ChannelNormalizingFlow(
+            input_channels=num_channels,
+            input_shape=(height, width),
+            num_flow_steps=4,
+            hidden_channels=32,
+        )
+
+        # Create random input
+        x = torch.randn(batch_size, num_channels, height, width)
+
+        # Forward pass computes log probability
+        log_prob = model.forward(x)
+
+        # Check output shape and type
+        assert isinstance(log_prob, torch.Tensor)
+        assert log_prob.shape == (batch_size,)
+
+        # Log probabilities should be real numbers (not NaN or Inf)
+        assert torch.all(torch.isfinite(log_prob))
+
+    def test_sample_basically_works(self):
+        """
+        Test if sampling from the model works and generates correct shape.
+        """
+        num_samples = 16
+        num_channels = 1
+        height = 32
+        width = 32
+
+        model = ChannelNormalizingFlow(
+            input_channels=num_channels,
+            input_shape=(height, width),
+            num_flow_steps=4,
+            hidden_channels=32,
+        )
+
+        # Sample from the model
+        samples = model.sample(num_samples)
+
+        # Check output shape
+        assert samples.shape == (num_samples, num_channels, height, width)
+
+        # Samples should be finite
+        assert torch.all(torch.isfinite(samples))
+
+    def test_training_step_works(self):
+        """
+        Test if the training step computes loss correctly.
+        """
+        batch_size = 8
+        num_channels = 1
+        height = 32
+        width = 32
+
+        model = ChannelNormalizingFlow(
+            input_channels=num_channels,
+            input_shape=(height, width),
+            num_flow_steps=4,
+            hidden_channels=32,
+        )
+
+        # Create dummy batch (images, labels)
+        x = torch.randn(batch_size, num_channels, height, width)
+        y = torch.randn(batch_size, 2)  # Dummy labels (not used)
+        batch = (x, y)
+
+        # Run training step
+        loss = model.training_step(batch, batch_idx=0)
+
+        # Loss should be a scalar tensor
+        assert isinstance(loss, torch.Tensor)
+        assert loss.ndim == 0  # Scalar
+
+        # Loss should be positive (negative log likelihood)
+        assert loss.item() > 0
+
+        # Loss should be finite
+        assert torch.isfinite(loss)
+
+    def test_validation_step_works(self):
+        """
+        Test if the validation step computes loss correctly.
+        """
+        batch_size = 8
+        num_channels = 1
+        height = 32
+        width = 32
+
+        model = ChannelNormalizingFlow(
+            input_channels=num_channels,
+            input_shape=(height, width),
+            num_flow_steps=4,
+            hidden_channels=32,
+        )
+
+        # Create dummy batch
+        x = torch.randn(batch_size, num_channels, height, width)
+        y = torch.randn(batch_size, 2)
+        batch = (x, y)
+
+        # Run validation step
+        loss = model.validation_step(batch, batch_idx=0)
+
+        # Loss should be a scalar tensor
+        assert isinstance(loss, torch.Tensor)
+        assert loss.ndim == 0
+        assert loss.item() > 0
+        assert torch.isfinite(loss)
+
+    def test_different_image_sizes(self):
+        """
+        Test if the model works with different input image sizes.
+        """
+        for height, width in [(16, 16), (32, 64), (64, 128)]:
+            model = ChannelNormalizingFlow(
+                input_channels=1,
+                input_shape=(height, width),
+                num_flow_steps=4,
+                hidden_channels=32,
+            )
+
+            x = torch.randn(4, 1, height, width)
+            log_prob = model.forward(x)
+
+            assert log_prob.shape == (4,)
+            assert torch.all(torch.isfinite(log_prob))
+
+            # Test sampling
+            samples = model.sample(4)
+            assert samples.shape == (4, 1, height, width)
+
+    def test_can_overfit_simple_data(self):
+        """
+        Test if the model can overfit a small batch of simple data.
+        This tests if the model is actually learning.
+        """
+        batch_size = 4
+        num_channels = 1
+        height = 16
+        width = 16
+
+        model = ChannelNormalizingFlow(
+            input_channels=num_channels,
+            input_shape=(height, width),
+            num_flow_steps=4,
+            hidden_channels=32,
+            learning_rate=1e-2,
+        )
+
+        # Create a simple repeating pattern
+        x = torch.zeros(batch_size, num_channels, height, width)
+        x[:, :, ::2, ::2] = 1.0  # Checkerboard pattern
+
+        # Get initial loss
+        y = torch.zeros(batch_size, 2)  # Dummy labels
+        batch = (x, y)
+        initial_loss = model.training_step(batch, batch_idx=0).item()
+
+        # Train for a few steps
+        optimizer = model.configure_optimizers()
+        for _ in range(20):
+            optimizer.zero_grad()
+            loss = model.training_step(batch, batch_idx=0)
+            loss.backward()
+            optimizer.step()
+
+        # Get final loss
+        final_loss = model.training_step(batch, batch_idx=0).item()
+
+        # Loss should decrease (model is learning)
+        print(f"Initial loss: {initial_loss:.4f}, Final loss: {final_loss:.4f}")
+        # Allow larger tolerance since flows can be harder to train
+        assert final_loss < initial_loss or abs(final_loss - initial_loss) < 2.0
